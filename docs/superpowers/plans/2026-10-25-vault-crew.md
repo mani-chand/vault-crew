@@ -20,6 +20,9 @@
 - No bomb/defuse imagery or language anywhere in copy, art, or identifiers. Module names: Circuit Bank, Tumbler, Glyph Pad, Pulse. Module ids: `circuit`, `tumbler`, `glyphpad`, `pulse`.
 - Rules screen copy, verbatim: "Cracker: say what you see. Crew: say what to do. Nobody reads anyone else's screen. Four modules, four minutes, three strikes. Every minute the Crew's pages swap."
 - Colour never the only signal: every coloured wire/button/dot also carries a text label.
+- Identity: `playerId` is public (it appears in every snapshot's player list). It is never proof of identity. The server issues a separate `resumeToken` (32 random bytes, hex, from `crypto.randomBytes`) on create/join; every resume and every socket action is authenticated by `playerId + resumeToken`, compared with `crypto.timingSafeEqual`. Tokens never appear in any snapshot or event.
+- No production path ever logs, prints, or serves puzzle answers. No debug env flag for secrets. Tests reach answers by importing server internals (`round.puzzles`) in-process.
+- `/healthz` exists for Render's health check only. It does not and cannot keep a free-tier service awake; the client's "Waking up the vault…" state covers the cold start.
 - Commits: plain imperative messages, no attribution trailers.
 
 ## Review Focus
@@ -28,7 +31,7 @@
 2. Room code typed lowercase or with spaces (` abcd `): must join `ABCD`. Test pinned in Task 10.
 3. Cracker double-taps a module control: second tap carries the same `step`, must be ignored, exactly one strike or one advance. Test pinned in Task 8.
 4. Any action after the round ended (timeout fires while a tap is in flight) or on an already-solved module: rejected, no strike, no crash. Test pinned in Task 8.
-5. Phone screen locks for 20 s mid-round then wakes: socket reconnects with the same `playerId`, player never shows as removed, receives current `assignmentVersion` pages. Test pinned in Task 11 (integration).
+5. Phone screen locks for 20 s mid-round then wakes: socket reconnects with the same `playerId + resumeToken`, player never shows as removed, receives current `assignmentVersion` pages. Test pinned in Task 11 (integration).
 
 ---
 
@@ -305,6 +308,22 @@ test('cutting an already-cut wire is ok (ignored), no strike', () => {
   assert.deepEqual(circuit.validate(p, { wire: wrong }), { result: 'ok' });
 });
 test('rule spread: no single rule answers more than 45% of 1000 puzzles', () => { /* count which rule index fired via circuit.whichRule(view, manual); assert max/1000 < 0.45 */ });
+test('every reachable wrong-cut state stays solvable: after any 1 or 2 wrong cuts, solve returns an index into the remaining wires', () => {
+  for (let s = 0; s < 300; s++) {
+    const p = circuit.generatePuzzle(createRng(s), manual);
+    const n = p.view.wires.length;
+    for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) {
+      const q = structuredClone(p);
+      const r1 = circuit.validate(q, { wire: a });
+      if (r1.result !== 'strike') continue;
+      const r2 = circuit.validate(q, { wire: b });
+      if (r2.result === 'solved' || r2.result === 'ok') continue;
+      const remaining = q.view.wires.filter(w => !w.cut);
+      assert.ok(remaining.length >= 2);
+      assert.ok(q.secret.cutIndex >= 0 && q.secret.cutIndex < remaining.length);
+    }
+  }
+});
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -483,8 +502,12 @@ test('extra page goes to the player with lowest double burden', () => {
   assert.equal(r.extraHolderId, 'b');
 });
 test('lookout goes to the player with lowest lookout burden', ...);
-test('reassignment differs from previous for 2..5 crew across 200 seeds', ...);
 test('every page assigned exactly once', ...);
+test('exhaustive: for crew counts 1..5 and 200 seeds each, reassignment differs from previous whenever any different valid assignment exists', () => {
+  // for crew 1 there is exactly one valid assignment → may equal previous; for 2..5 assert differs
+});
+test('exhaustive: for crew counts 1..5 and 200 seeds each, sizes match the table and extra/lookout go to the least-burdened player', ...);
+test('burden minimisation over 12 consecutive shuffles with 3 crew: max double count − min double count ≤ 1', ...);
 
 // scoring.test.js
 test('opened: 1000 + 5*sec - 150*strikes', () => assert.equal(roundScore({ result:'opened', timeLeftMs: 90500, strikes: 1 }), 1300));
@@ -497,7 +520,7 @@ test('awards are null when no round opened', ...);
 
 - [ ] **Step 3: Implement `server/assignment.js` and `server/scoring.js`**
 
-For "must differ": generate candidate by choosing extra holder/lookout per burden then shuffling pages across holders with rng; if equal to previous, re-shuffle (bounded loop of 50) and finally rotate page order one step. `timeLeftMs` is measured as `endsAt - solvedAt`; `elapsed = ROUND_MS - timeLeftMs`.
+For "must differ" use construction, not retry: choose extra holder / lookout by burden, then distribute pages by rotating the page list by a random offset `k` over the holder list; if the result equals `previous`, use offset `k + 1` (mod page count). With ≥2 holders two different offsets always give different assignments, so the guarantee is structural. `timeLeftMs` is measured as `endsAt - solvedAt`; `elapsed = ROUND_MS - timeLeftMs`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -535,7 +558,9 @@ git commit -m "Add page assignment with fairness and round scoring"
   }
   ```
   `onEvent(type, data)` types: `strike {strikes, moduleId}`, `moduleSolved {moduleId}`, `shuffle {shuffleId, assignmentVersion, reason:'scheduled'|'crewChanged'}`, `ended {result}`. Each module keeps `step` starting at 0 incremented on every accepted action (ok, strike, solved). `shuffleEnabled` is recomputed at each shuffle time as `current crewIds.length >= 2`.
-- `test/fakeClock.js`: `createFakeClock(start = 0) → { now, setTimeout, clearTimeout, advance(ms) }` firing due timers in order.
+  - **Roster:** the Round owns its own roster (`crackerId`, `crewIds`) fixed at `start()`. The Room never adds a player to a running Round; `setCrew` is only ever called with a subset (removals). Late joiners live in the Room's `pending` list until the next `startRound`.
+  - **Deadline boundary:** `action()` first checks `clock.now() >= endsAt`; if so it calls `end('timeout')` (idempotent) and returns `{ ok:false, error:'round-over' }`. An action at `endsAt - 1` is processed. Timer callbacks and this check share `end()`, so whichever runs first finalises and the other is a no-op.
+- `test/fakeClock.js`: `createFakeClock(start = 0) → { now, setTimeout, clearTimeout, advance(ms), set(ms) }` — `advance` fires due timers in order; `set` moves `now` without firing timers (for boundary tests).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -555,6 +580,9 @@ test('third strike locks and emits ended locked', ...);
 test('solving all four opens vault; timeLeftMs in summary', ...);   // use secrets white-box to solve
 test('action on solved module rejected solved, no strike', ...);
 test('action after end rejected round-over', ...);
+test('deadline boundary: action at endsAt-1 processed; action at endsAt rejected round-over and round finalised as timeout even before the timer callback runs', () => {
+  // clock.advance(239999) then action → ok:true; new round: set clock to exactly endsAt without firing timers (fakeClock.set(ms)) → action → round-over, r.result === 'timeout'
+});
 test('shuffles fire at 60000, 120000, 180000 with increasing version and distinct shuffleId', ...);
 test('no shuffle fires after round ended', ...);
 test('shuffle skipped when crew count drops below 2, resumes when it grows', ...);
@@ -640,7 +668,8 @@ git commit -m "Add match with cracker rotation and summary"
   // room.js
   export class Room {
     constructor({ code, rng, clock, timings, onChange, onEvent })   // onChange() after any state change; onEvent(type, data, { to: 'all' | playerId[] })
-    join(playerId, nickname) → { ok: true } | { ok: false, error: 'full'|'name-taken'|'bad-name' }   // mid-round joiners get joinedMidRound = true
+    join(playerId, nickname) → { ok: true, resumeToken } | { ok: false, error: 'full'|'name-taken'|'bad-name' }   // mid-round joiners go to `pending` until the next round starts
+    authenticate(playerId, resumeToken) → boolean    // timingSafeEqual; false for unknown player or wrong token
     leave(playerId)                                  // explicit leave: remove immediately
     disconnect(playerId)                             // starts grace (30 s if cracker in active round, else 60 s)
     reconnect(playerId) → boolean                    // cancels grace; false if unknown
@@ -649,7 +678,8 @@ git commit -m "Add match with cracker rotation and summary"
     rematch(byPlayerId) → { ok } | ...
     action(playerId, moduleId, step, action) → Round.action result or { ok:false, error:'bad-phase' }
     get phase  // 'lobby'|'reveal'|'round'|'roundResult'|'final'
-    get hostId, players /* [{ playerId, nickname, joinOrder, connected, joinedMidRound }] */, match, round, lastActivityAt
+    get hostId, players /* [{ playerId, nickname, joinOrder, connected, pending }] */, match, round, lastActivityAt
+    // `pending` = joined during reveal/round; not in the Round roster; becomes false at the next startRound. Pending players count toward the cap of 6.
     roleOf(playerId) → 'cracker'|'crew'|'lookout'|null
   }
   // rooms.js
@@ -703,8 +733,11 @@ test('crew disconnect: still listed, connected=false; removed after 60 s and pag
 test('cracker disconnect: removed after 30 s and round locked', ...);
 test('reconnect within grace cancels removal', ...);
 test('room shrinks below 2 mid-round → round locked, phase final', ...);
-test('mid-round joiner: role lookout now, full player next round', ...);
+test('mid-round joiner: pending, role lookout now, not in round crew, full player next round', () => { /* assert room.round.crewIds excludes joiner; after next round starts, pending false and joiner in roster */ });
+test('mid-round joiner never receives pages in the current round even across a shuffle', ...);
 test('action in lobby rejected bad-phase', ...);
+test('join returns a 64-hex resumeToken; authenticate accepts it and rejects a wrong one and an unknown player', ...);
+test('resumeToken never appears in any snapshot', () => assert.equal(JSON.stringify(snap).includes(token), false));
 
 // rooms.test.js
 test('create gives unique codes; get normalizes " abcd "', ...);
@@ -742,14 +775,15 @@ git commit -m "Add room lifecycle, room manager and role-specific views"
 
 **Interfaces:**
 - Client → server events (all with ack callback `(res) => …`):
-  - `room:create { nickname }` → `{ ok, code, playerId }`
-  - `room:join { code, nickname }` → `{ ok, code } | { ok:false, error: 'not-found'|'full'|'name-taken'|'bad-name' }`
-  - `room:resume { code }` → `{ ok } | { ok:false, error:'gone' }`  (uses `playerId` from handshake auth)
+  - `room:create { nickname }` → `{ ok, code, playerId, resumeToken }`
+  - `room:join { code, nickname }` → `{ ok, code, playerId, resumeToken } | { ok:false, error: 'not-found'|'full'|'name-taken'|'bad-name' }`
+  - `room:resume { code, playerId, resumeToken }` → `{ ok } | { ok:false, error:'gone'|'unauthorized' }`
+  - Every other event is accepted only from a socket that has completed create/join/resume on this connection (`socket.data.authenticated === true`); otherwise ack `{ ok:false, error:'unauthorized' }`. The server generates `playerId` (UUID) on create/join; the client never chooses it.
   - `room:leave`, `game:start`, `round:next`, `match:rematch` → `{ ok } | { ok:false, error }`
   - `module:action { moduleId, step, action }` → Round.action result
   - `time:ping { t0 }` → `{ t0, serverNow }`
 - Server → client: `state` (Snapshot), `event { type, ...data }` (strike, moduleSolved, shuffle, ended, playerJoined, playerLeft), `room:gone`.
-- Handshake: `socket.handshake.auth.playerId` (client-generated UUID, persisted in localStorage). `socket.data = { playerId, code }`. Sockets join Socket.IO room `code`. On every `onChange` the layer emits `state` individually per connected player (`snapshotFor`). On `disconnect` → `room.disconnect(playerId)`.
+- No handshake auth. `socket.data = { playerId, code, authenticated }` is set only by a successful create/join/resume. Sockets join Socket.IO room `code`. On every `onChange` the layer emits `state` individually per connected player (`snapshotFor`). On `disconnect` → `room.disconnect(playerId)`.
 - `createApp` now returns `{ httpServer, io, rooms }` with sockets wired.
 
 - [ ] **Step 1: Write the failing integration test**
@@ -763,11 +797,16 @@ test('two players create, join, start, and the cracker opens the vault', async (
   // assert final state.phase === 'roundResult' and round.result === 'opened'
 });
 test('crew client never receives a payload containing "secret" or cracker modules', ...);
-test('reconnect with same playerId during round restores role and pages', async () => {
-  // disconnect c2's socket, reconnect with same auth.playerId, emit room:resume → state.you.role === 'crew', state.crew.pages.length === 4
+test('reconnect with playerId + resumeToken during round restores role and pages', async () => {
+  // disconnect c2's socket, new socket, emit room:resume {code, playerId, resumeToken} → state.you.role === 'crew', state.crew.pages.length === 4
 });
-test('unknown playerId resuming unknown room gets room:gone', ...);
+test('resume with another player\'s playerId but wrong token → unauthorized; no state ever sent to that socket', ...);
+test('module:action from a socket that never authenticated → unauthorized', ...);
+test('unknown room on resume gets room:gone', ...);
 test('crew sending module:action gets ok:false not-cracker', ...);
+test('3 players: shuffle at 1000 ms changes crew pages; both crew sockets receive a shuffle event with the same shuffleId; each receives only its own pages; cracker socket receives the event but no pages', ...);
+test('6 players: exactly one crew socket has role lookout with crew === null; four have one page each; after shuffle the lookout changes to the least-burdened player', ...);
+test('payload isolation across all 6 sockets for a whole round: no non-cracker ever receives a "cracker" key, no cracker ever receives a "crew" key, nobody receives "secret" or a resumeToken', ...);
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -795,7 +834,7 @@ git commit -m "Add socket layer with per-player snapshots and integration test"
 - Modify: `public/index.html`
 
 **Interfaces:**
-- `net.js`: `connect({ onState, onEvent, onStatus, onGone })`; `call(event, payload) → Promise<res>`; `getPlayerId()` (UUID in `localStorage.vcPlayerId`); `serverNow()` using offset from three `time:ping` samples (median of `serverNow - (t0 + t1) / 2`); `savedRoom()` / `saveRoom(code)` in `localStorage.vcRoom` for resume.
+- `net.js`: `connect({ onState, onEvent, onStatus, onGone })`; `call(event, payload) → Promise<res>`; `serverNow()` using offset from three `time:ping` samples (median of `serverNow - (t0 + t1) / 2`); `savedSession()` / `saveSession({ code, playerId, resumeToken })` / `clearSession()` in `localStorage.vcSession` for resume. The client never generates a playerId.
 - `app.js`: `store = { state, status: 'connecting'|'online'|'reconnecting', screen }`; `render()` shows exactly one `<section data-screen>` based on `state.phase` and `state.you.role`; `on(eventType, handler)` for screen modules to subscribe to server events.
 - `dom.js`: `h(tag, attrs, ...children)` creating elements with `textContent` for strings (never innerHTML), `$()`.
 - Screens export `render(root, state, actions)` where `actions = { call }`.
@@ -806,7 +845,7 @@ Sections: `join, lobby, reveal, cracker, crew, lookout, roundResult, final, gone
 
 - [ ] **Step 2: Implement `dom.js`, `net.js`, `app.js`**
 
-Connection states: show "Waking up the vault…" while `status === 'connecting'` for more than 1.5 s (Render cold start); dim screen with "Reconnecting…" after 3 s of `reconnecting`. On `connect`, if `savedRoom()` exists emit `room:resume`; on `room:gone` clear saved room and show the `gone` section.
+Connection states: show "Waking up the vault…" while `status === 'connecting'` for more than 1.5 s (Render cold start); dim screen with "Reconnecting…" after 3 s of `reconnecting`. On `connect`, if `savedSession()` exists emit `room:resume` with it; on `room:gone` or `unauthorized` clear the session and show the `gone` section.
 
 - [ ] **Step 3: Implement `join.js` and `lobby.js`**
 
@@ -822,7 +861,7 @@ Run: `npm start`, open `http://localhost:3000` in two tabs (one incognito). Crea
 git add -A
 git commit -m "Add client foundation with join and lobby screens"
 ```
-Then: create a GitHub repo `vault-crew` (owner's account), `git remote add origin … && git push -u origin main`; owner creates a Render Blueprint from the repo. Verify `https://<service>.onrender.com/healthz` returns `{ ok: true }` and two phones can reach the lobby. Record the URL in `README.md`.
+Then: create a GitHub repo `vault-crew` under the owner's personal account `mani-chand`, `git remote add origin … && git push -u origin main`; owner creates a Render Blueprint from the repo. Verify `https://<service>.onrender.com/healthz` returns `{ ok: true }` and two phones can reach the lobby. Then measure the real cold start: leave the service idle > 15 min, open the URL, time until the join screen appears, and record it in `README.md` with the URL. Deployment and device results are reported only when actually performed.
 
 ---
 
@@ -850,7 +889,7 @@ Reveal: full-screen "You are the CRACKER" / "You are CREW — pages: Tumbler, Pu
 
 - [ ] **Step 3: Manual verification**
 
-Two tabs, start a game. In the cracker tab: open each module, perform a wrong action → strike flash, counter updates in the other tab; solve a module using the server log (temporarily `console.log` secrets in dev only via `DEBUG_SECRETS=1` env, read by `round.js`, never on by default) → tile locks green on both tabs.
+Two tabs, start a game. You are both players: read the manual in the crew tab, act in the cracker tab. Perform a wrong action → strike flash, counter updates in the other tab; solve a module by following the manual → tile locks green on both tabs. No secret logging of any kind.
 
 - [ ] **Step 4: Commit**
 

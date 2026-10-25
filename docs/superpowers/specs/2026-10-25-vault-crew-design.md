@@ -151,7 +151,7 @@ Sound: short, optional (muted until the user taps a sound toggle, because mobile
 
 ## Connection, reconnection, and host
 
-- Each browser gets a `playerId` token stored in localStorage on first join. Reconnect with the same token re-attaches to the same player and replays current role-specific state.
+- On create/join the server issues a public `playerId` and a secret `resumeToken`; the browser stores both in localStorage. Reconnecting with the pair re-attaches to the same player and replays current role-specific state. `playerId` alone is never proof of identity (it is visible to every player in the room); the token never appears in any payload sent to clients.
 - Disconnect grace (my call): 60 s for Crew, 30 s for the Cracker. Player shows as "reconnecting" on everyone's list. The round clock never pauses — a disconnect costs the team time, consistent with "no extensions". After the grace expires the player is removed: if they were the Cracker, the round ends as locked; if they were Crew, their pages are redistributed immediately (shown to everyone as an unscheduled shuffle, with its own `assignmentVersion`).
 - Player count changes mid-match (my call): shuffle eligibility is re-evaluated at every 60 s boundary against the players currently in the room (connected or in grace), so a room that shrinks to 2 stops shuffling and a room that grows back to 3 resumes. If a removal leaves fewer than 2 players, the current round ends as locked and the match ends early; the final screen shows the rounds that were played.
 - Host migration: if the host leaves, host passes to the next player in join order.
