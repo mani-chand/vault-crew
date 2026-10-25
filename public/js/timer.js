@@ -18,7 +18,8 @@ export function formatClock(ms) {
 
 function tick() {
   const timers = document.querySelectorAll('[data-ends-at]');
-  if (timers.length === 0) {
+  const countdowns = document.querySelectorAll('[data-shuffle-at]');
+  if (timers.length === 0 && countdowns.length === 0) {
     clearInterval(ticker);
     ticker = null;
     return;
@@ -31,6 +32,31 @@ function tick() {
     el.classList.toggle('timer--amber', left < AMBER_UNDER_MS && left >= RED_UNDER_MS);
     el.classList.toggle('timer--red', left < RED_UNDER_MS);
   }
+  for (const el of countdowns) renderCountdown(el, now);
+}
+
+function renderCountdown(el, now) {
+  const left = Number(el.dataset.shuffleAt) - now;
+  const warn = Number(el.dataset.warnMs);
+  if (left <= 0) {
+    el.textContent = 'Pages swapping…';
+    el.classList.add('swapcount--warn');
+  } else if (left <= warn) {
+    el.textContent = `Pages swap in ${Math.ceil(left / 1000)}…`;
+    el.classList.add('swapcount--warn');
+  } else {
+    el.textContent = `Pages swap in ${formatClock(left)}`;
+    el.classList.remove('swapcount--warn');
+  }
+}
+
+// A "pages swap in …" line that turns urgent inside the warning window.
+export function mountShuffleCountdown(el, { at, warnMs }) {
+  el.dataset.shuffleAt = String(at);
+  el.dataset.warnMs = String(warnMs);
+  renderCountdown(el, serverNow());
+  if (!ticker) ticker = setInterval(tick, TICK_MS);
+  return el;
 }
 
 // Sets `el` up as a live countdown to `endsAt` (server ms). A null endsAt
