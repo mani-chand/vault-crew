@@ -39,15 +39,22 @@ export class Round {
     this.pendingShuffleAt = [];
   }
 
-  start() {
+  // Generates the puzzles and deals the pages without starting the clock, so
+  // the reveal screen can show roles and page names. Idempotent.
+  deal() {
+    if (this.puzzles) return;
     this.puzzles = generatePuzzles(this.rng, this.manuals);
     for (const id of MODULE_IDS) {
       this.seqs[id] = 0;
       this.solved[id] = false;
     }
+    this.reassign();
+  }
+
+  start() {
+    this.deal();
     this.startedAt = this.clock.now();
     this.endsAt = this.startedAt + this.timings.ROUND_MS;
-    this.reassign();
 
     this.timers.push(this.clock.setTimeout(() => this.end('timeout'), this.timings.ROUND_MS));
     for (const at of this.timings.SHUFFLE_AT_MS) {
@@ -126,6 +133,7 @@ export class Round {
 
   action(playerId, moduleId, seq, action) {
     if (playerId !== this.crackerId) return { ok: false, error: 'not-cracker' };
+    if (this.startedAt === null) return { ok: false, error: 'not-started' };
     if (!this.ended && this.clock.now() >= this.endsAt) this.end('timeout');
     if (this.ended) return { ok: false, error: 'round-over' };
     if (!MODULE_IDS.includes(moduleId)) return { ok: false, error: 'bad-module' };
@@ -181,7 +189,7 @@ export class Round {
     const endedAt = this.endedAt ?? this.clock.now();
     return {
       result: this.result,
-      timeLeftMs: Math.max(0, this.endsAt - endedAt),
+      timeLeftMs: this.endsAt === null ? 0 : Math.max(0, this.endsAt - endedAt),
       strikes: this.strikes,
       solvedCount: MODULE_IDS.filter((id) => this.solved[id]).length,
       crackerId: this.crackerId,

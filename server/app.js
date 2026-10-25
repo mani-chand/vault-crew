@@ -4,10 +4,12 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { Server } from 'socket.io';
 import { DEFAULT_TIMINGS, realClock } from './constants.js';
+import { createRng } from './rng.js';
+import { RoomManager } from './rooms.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-export function createApp({ clock = realClock, timings = DEFAULT_TIMINGS, seed } = {}) {
+export function createApp({ clock = realClock, timings = DEFAULT_TIMINGS, seed = Date.now() } = {}) {
   const app = express();
   app.get('/healthz', (_req, res) => res.json({ ok: true }));
   app.use(express.static(path.join(ROOT, 'public')));
@@ -16,7 +18,15 @@ export function createApp({ clock = realClock, timings = DEFAULT_TIMINGS, seed }
   const httpServer = http.createServer(app);
   const io = new Server(httpServer);
 
-  // Room manager and socket wiring arrive in later tasks.
-  void clock; void timings; void seed;
-  return { httpServer, io, rooms: null };
+  // Socket wiring (per-player snapshots, events) is attached in socket.js.
+  const hooks = { onChange: () => {}, onEvent: () => {} };
+  const rooms = new RoomManager({
+    rng: createRng(seed),
+    clock,
+    timings,
+    onChange: (room) => hooks.onChange(room),
+    onEvent: (room, type, data, opts) => hooks.onEvent(room, type, data, opts),
+  });
+
+  return { httpServer, io, rooms, hooks };
 }

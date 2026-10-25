@@ -18,6 +18,9 @@ export const MAX_PLAYERS = 6;
 export const NICKNAME_MIN = 2;
 export const NICKNAME_MAX = 12;
 
+export const RULES_TEXT =
+  "Cracker: say what you see. Crew: say what to do. Nobody reads anyone else's screen. Four modules, four minutes, three strikes. Every minute the Crew's pages swap.";
+
 export const DEFAULT_TIMINGS = Object.freeze({
   ROUND_MS,
   SHUFFLE_AT_MS,
@@ -30,8 +33,14 @@ export const DEFAULT_TIMINGS = Object.freeze({
   ROOM_SWEEP_MS,
 });
 
+// Timers are unref'd so they never keep the process alive on their own; the
+// listening HTTP server does that in production, and tests can exit cleanly.
 export const realClock = Object.freeze({
   now: () => Date.now(),
-  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  setTimeout: (fn, ms) => {
+    const handle = setTimeout(fn, ms);
+    if (typeof handle.unref === 'function') handle.unref();
+    return handle;
+  },
   clearTimeout: (handle) => clearTimeout(handle),
 });

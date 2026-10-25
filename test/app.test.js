@@ -20,6 +20,14 @@ test('GET /healthz returns 200 ok', async () => {
   }
 });
 
+test('createApp returns a room manager that can create rooms', () => {
+  const { rooms, httpServer } = createApp();
+  const room = rooms.create();
+  assert.match(room.code, /^[A-Z]{4}$/);
+  assert.equal(rooms.get(room.code), room);
+  httpServer.close();
+});
+
 test('GET / serves the client html', async () => {
   const { httpServer, base } = await listen();
   try {

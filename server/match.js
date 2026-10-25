@@ -41,7 +41,9 @@ export class Match {
     return best;
   }
 
-  startRound(presentIds) {
+  // `start: false` deals the round (roles, pages) but leaves the clock for the
+  // caller to start after the reveal screen.
+  startRound(presentIds, { start = true } = {}) {
     if (this.isComplete) throw new Error('match is complete');
     const crackerId = this.nextCrackerId(presentIds);
     const round = new Round({
@@ -55,7 +57,8 @@ export class Match {
       timings: this.timings,
       onEvent: this.onEvent,
     });
-    round.start();
+    round.deal();
+    if (start) round.start();
     this.current = round;
     return round;
   }
