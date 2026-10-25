@@ -4,7 +4,7 @@ A co-op heist game for 2–6 phones. One player is the **Cracker** and sees the 
 
 Four modules, four minutes, three strikes, five rounds. No accounts, nothing to install: open the link, type a nickname and a four-letter room code.
 
-**Play:** _public URL pending first Render deploy — see Deploy below_
+**Play:** https://vault-crew-pbh1.onrender.com (free tier: the first visit after ~15 min idle takes 30–60 s to wake up)
 
 ## How to play (what the rules screen says)
 
