@@ -207,6 +207,8 @@ export class Room {
   beginReveal() {
     for (const p of this.playersById.values()) p.pending = false;
     this.round = this.match.startRound(this.playerIds, { start: false });
+    // Kept on the round so the result screen still names a Cracker who left.
+    this.round.crackerName = this.playersById.get(this.round.crackerId)?.nickname ?? null;
     this.phase = 'reveal';
     this.resultAt = null;
     this.cancelReveal();

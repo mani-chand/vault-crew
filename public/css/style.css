@@ -508,6 +508,10 @@ button, input {
 .module { display: flex; flex-direction: column; gap: 16px; }
 .module--solved { opacity: 0.7; }
 
+/* Controls are locked from a tap until the server's next snapshot. */
+.module--busy { pointer-events: none; }
+.module--busy button { opacity: 0.6; }
+
 .readout {
   display: flex;
   align-items: baseline;

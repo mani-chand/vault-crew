@@ -3,27 +3,21 @@
 import { h, clear, append } from '../dom.js';
 import { renderInstruments, flashInstruments } from '../instruments.js';
 import { mountShuffleCountdown } from '../timer.js';
-import { showSwapFlash } from './crew.js';
+import { onShuffleEvent } from './crew.js';
 
 let subscribed = false;
-let appliedVersion = 0;
 
 function subscribe(actions) {
   if (subscribed) return;
   subscribed = true;
   actions.on('strike', () => flashInstruments('strike'));
   actions.on('moduleSolved', () => flashInstruments('solved'));
-  actions.on('shuffle', (e) => {
-    if (e.assignmentVersion <= appliedVersion) return;
-    appliedVersion = e.assignmentVersion;
-    showSwapFlash();
-  });
+  actions.on('shuffle', onShuffleEvent);
 }
 
 export function render(root, state, actions) {
   subscribe(actions);
   clear(root);
-  if (state.round.assignmentVersion > appliedVersion) appliedVersion = state.round.assignmentVersion;
   const pending = state.players.find((p) => p.playerId === state.you.playerId)?.pending;
 
   append(root, [

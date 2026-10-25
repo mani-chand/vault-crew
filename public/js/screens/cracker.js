@@ -8,6 +8,7 @@ import * as circuit from '../modules/circuit.js';
 import * as tumbler from '../modules/tumbler.js';
 import * as glyphpad from '../modules/glyphpad.js';
 import * as pulse from '../modules/pulse.js';
+import { createInflightGate } from '../inflight.js';
 
 const MODULE_UI = { circuit, tumbler, glyphpad, pulse };
 const AUTO_CLOSE_MS = 900;
@@ -16,6 +17,7 @@ let openModule = null;
 let roundKey = null;
 let subscribed = false;
 let bannerTimer = null;
+const gates = { circuit: createInflightGate(), tumbler: createInflightGate(), glyphpad: createInflightGate(), pulse: createInflightGate() };
 
 function subscribe(actions) {
   if (subscribed) return;
@@ -39,13 +41,11 @@ export function render(root, state, actions) {
     openModule = null;
   }
   clear(root);
+  // A fresh snapshot carries the new seq, so every gate opens again.
+  for (const gate of Object.values(gates)) gate.release();
 
   const modules = state.cracker.modules;
-  const send = (moduleId) => (action) =>
-    actions.call('module:action', { moduleId, seq: modules[moduleId].seq, action });
-
   const rerender = () => render(root, state, actions);
-
   const banner = h('p', { class: 'banner banner--teal', id: 'cracker-banner', hidden: true }, 'Crew pages shuffled');
 
   if (openModule && modules[openModule]) {
@@ -53,7 +53,16 @@ export function render(root, state, actions) {
     const m = modules[id];
     if (m.status === 'solved') setTimeout(() => { if (openModule === id) { openModule = null; rerender(); } }, AUTO_CLOSE_MS);
     const panel = h('div', { class: `module module--${id}${m.status === 'solved' ? ' module--solved' : ''}` });
-    MODULE_UI[id].render(panel, m, { send: send(id) });
+    const gate = gates[id];
+    const send = async (action) => {
+      if (gate.locked) return { ok: false, error: 'busy' };
+      gate.lock();
+      panel.classList.add('module--busy');
+      const res = await actions.call('module:action', { moduleId: id, seq: m.seq, action });
+      if (gate.settle(res) === 'unlocked') panel.classList.remove('module--busy');
+      return res;
+    };
+    MODULE_UI[id].render(panel, m, { send });
     append(root, [
       renderInstruments(state),
       banner,

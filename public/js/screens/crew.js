@@ -5,11 +5,12 @@ import { h, clear, append } from '../dom.js';
 import { renderInstruments, flashInstruments, MODULE_ORDER } from '../instruments.js';
 import { renderManual } from '../manual.js';
 import { mountShuffleCountdown } from '../timer.js';
+import { createShuffleTracker } from '../shuffleTracker.js';
 
 let activeTab = null;
-let appliedVersion = 0;
 let subscribed = false;
 let flashTimer = null;
+const shuffles = createShuffleTracker();
 
 export function showSwapFlash() {
   const flash = document.getElementById('swap-flash');
@@ -19,16 +20,18 @@ export function showSwapFlash() {
   flashTimer = setTimeout(() => { flash.hidden = true; }, 1000);
 }
 
+// Shared by the crew and lookout screens so a shuffle flashes exactly once
+// whichever screen is showing.
+export function onShuffleEvent(e) {
+  if (shuffles.isNew(e.shuffleId)) showSwapFlash();
+}
+
 function subscribe(actions) {
   if (subscribed) return;
   subscribed = true;
   actions.on('strike', () => flashInstruments('strike'));
   actions.on('moduleSolved', () => flashInstruments('solved'));
-  actions.on('shuffle', (e) => {
-    if (e.assignmentVersion <= appliedVersion) return;
-    appliedVersion = e.assignmentVersion;
-    showSwapFlash();
-  });
+  actions.on('shuffle', onShuffleEvent);
 }
 
 export function render(root, state, actions) {
@@ -37,7 +40,6 @@ export function render(root, state, actions) {
   const pages = (state.crew ? state.crew.pages : []).slice()
     .sort((a, b) => MODULE_ORDER.indexOf(a.moduleId) - MODULE_ORDER.indexOf(b.moduleId));
   if (!pages.some((p) => p.moduleId === activeTab)) activeTab = pages.length ? pages[0].moduleId : null;
-  if (state.round.assignmentVersion > appliedVersion) appliedVersion = state.round.assignmentVersion;
 
   const rerender = () => render(root, state, actions);
   const current = pages.find((p) => p.moduleId === activeTab);

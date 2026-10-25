@@ -1,7 +1,8 @@
 // State store, screen router and event dispatcher. One section per screen;
 // the server snapshot decides which one shows.
 
-import { connect, call, clearSession, serverNow } from './net.js';
+import { connect, call as rawCall, clearSession, serverNow } from './net.js';
+import { sessionIsDead } from './session.js';
 import { $ } from './dom.js';
 import * as join from './screens/join.js';
 import * as lobby from './screens/lobby.js';
@@ -61,12 +62,25 @@ function screenFor() {
   }
 }
 
+// Any in-room call the server refuses as unauthorized/gone means this tab's
+// seat no longer exists; say so instead of leaving dead buttons.
+async function call(event, payload) {
+  const res = await rawCall(event, payload);
+  if (store.state && res && !res.ok && sessionIsDead(res.error)) {
+    clearSession();
+    store.state = null;
+    store.gone = res.error;
+    render();
+  }
+  return res;
+}
+
 const actions = {
   call,
   serverNow,
   on,
   async leave() {
-    await call('room:leave');
+    await rawCall('room:leave');
     clearSession();
     store.state = null;
     render();

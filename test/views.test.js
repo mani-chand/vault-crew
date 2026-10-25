@@ -165,6 +165,15 @@ test('final snapshot has summary with rounds, total, awards and players', () => 
   assert.equal(s.crew, null);
 });
 
+test('crackerName survives the cracker leaving mid-round', () => {
+  const { room, snap } = mk(3);
+  room.leave('p1');
+  assert.equal(room.phase, 'roundResult');
+  const s = snap('p2');
+  assert.equal(s.round.crackerId, 'p1');
+  assert.equal(s.round.crackerName, 'Player1');
+});
+
 test('snapshot for an unknown player is null', () => {
   const { snap } = mk(2);
   assert.equal(snap('ghost'), null);

@@ -42,7 +42,6 @@ export function render(root, _state, actions) {
     class: 'input',
     id: 'nick',
     type: 'text',
-    maxlength: '12',
     autocomplete: 'nickname',
     placeholder: 'Your name',
     value: savedNick(),
@@ -55,7 +54,6 @@ export function render(root, _state, actions) {
     autocapitalize: 'characters',
     autocomplete: 'off',
     spellcheck: 'false',
-    maxlength: '4',
     placeholder: '····',
     'aria-label': 'Room code',
   });
@@ -63,8 +61,14 @@ export function render(root, _state, actions) {
   const joinButton = h('button', { class: 'button button--primary', type: 'submit' }, 'Join room');
   const createButton = h('button', { class: 'button', type: 'button' }, 'Start a new room');
 
+  // No maxlength on these inputs: a pasted " abcd " must survive to be
+  // trimmed, and emoji names are counted in code points, not UTF-16 units.
   codeInput.addEventListener('input', () => {
     codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  });
+  nickInput.addEventListener('input', () => {
+    const chars = [...nickInput.value];
+    if (chars.length > 12) nickInput.value = chars.slice(0, 12).join('');
   });
 
   const busy = (on) => {

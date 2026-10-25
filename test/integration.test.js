@@ -232,6 +232,24 @@ test('payload isolation across 6 sockets for a whole round', async () => {
   assert.equal(names.size, 6);
 });
 
+test('a socket that creates a second room is detached from its first seat instead of leaving a ghost', async () => {
+  const c = client();
+  const a = await c.call('room:create', { nickname: 'Ann' });
+  assert.equal(a.ok, true);
+  const b = await c.call('room:create', { nickname: 'Ann' });
+  assert.equal(b.ok, true);
+  const roomA = app.rooms.get(a.code);
+  assert.equal(roomA.players.length, 1);
+  assert.equal(roomA.players[0].connected, false, 'old seat must enter grace, not stay "connected"');
+
+  const bob = client();
+  assert.equal((await bob.call('room:join', { code: a.code, nickname: 'Bob' })).ok, true);
+  await bob.waitFor((s) => s.players.length === 2, 'bob sees two');
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(c.states.some((s) => s.code === a.code && s.players.length === 2), false, 'socket still receives room A state');
+  assert.equal(c.last().code, b.code);
+});
+
 test('room:leave removes the player and the socket stops receiving state', async () => {
   const group = await lobby(3);
   assert.deepEqual(await group.others[1].call('room:leave', {}), { ok: true });

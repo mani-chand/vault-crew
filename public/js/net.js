@@ -1,39 +1,23 @@
-// Socket connection, session persistence and server clock offset.
+// Socket connection, seat persistence and server clock offset.
 //
-// The session (room code, playerId, resumeToken) lives in localStorage so a
-// phone that locks and wakes picks its seat back up. The client never
-// invents a playerId; both ids come from the server on create/join.
+// The client never invents a playerId; playerId and resumeToken both come
+// from the server on create/join. See session.js for why the seat lives in
+// sessionStorage.
 
-const SESSION_KEY = 'vcSession';
+import { createSessionStore, sessionIsDead } from './session.js';
+
 const PING_SAMPLES = 3;
+const RESUME_RETRIES = 3;
+const RESUME_RETRY_MS = 1500;
+
+const store = createSessionStore(window.sessionStorage);
 
 let socket = null;
 let offset = 0;
 
-export function savedSession() {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function saveSession(session) {
-  try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  } catch {
-    // Private mode or blocked storage: resume just won't work on this device.
-  }
-}
-
-export function clearSession() {
-  try {
-    localStorage.removeItem(SESSION_KEY);
-  } catch {
-    // ignore
-  }
-}
+export const savedSession = () => store.load();
+export const saveSession = (session) => store.save(session);
+export const clearSession = () => store.clear();
 
 export function serverNow() {
   return Date.now() + offset;
@@ -73,20 +57,32 @@ async function syncClock() {
   }
 }
 
+// Reclaims the saved seat. A dead seat is forgotten; a flaky network keeps
+// it and tries again, and the next connect tries once more.
+async function resume(onGone) {
+  for (let attempt = 0; attempt < RESUME_RETRIES; attempt++) {
+    const session = store.load();
+    if (!session) return;
+    const res = await call('room:resume', session);
+    if (res.ok) return;
+    if (sessionIsDead(res.error)) {
+      store.clear();
+      onGone(res.error);
+      return;
+    }
+    if (!socket.connected) return;
+    await new Promise((r) => setTimeout(r, RESUME_RETRY_MS));
+  }
+}
+
 export function connect({ onState, onEvent, onStatus, onGone }) {
   socket = window.io({ transports: ['websocket', 'polling'] });
   onStatus('connecting');
 
   socket.on('connect', async () => {
     onStatus('online');
+    await resume(onGone);
     await syncClock();
-    const session = savedSession();
-    if (!session) return;
-    const res = await call('room:resume', session);
-    if (!res.ok) {
-      clearSession();
-      onGone(res.error);
-    }
   });
 
   socket.on('disconnect', () => onStatus('reconnecting'));
@@ -94,7 +90,7 @@ export function connect({ onState, onEvent, onStatus, onGone }) {
   socket.on('state', onState);
   socket.on('event', onEvent);
   socket.on('room:gone', () => {
-    clearSession();
+    store.clear();
     onGone('gone');
   });
   return socket;

@@ -32,6 +32,14 @@ export function attachSockets({ io, rooms, hooks, clock }) {
 
     function bind(room, playerId) {
       const key = keyOf(room.code, playerId);
+      // A socket already holding a different seat gives it up first: the old
+      // seat enters its grace period instead of lingering as a ghost player.
+      if (socket.data.authenticated && keyOf(socket.data.code, socket.data.playerId) !== key) {
+        const oldRoom = rooms.get(socket.data.code);
+        const oldPlayerId = socket.data.playerId;
+        unbind(socket);
+        if (oldRoom) oldRoom.disconnect(oldPlayerId);
+      }
       const previous = socketsByPlayer.get(key);
       if (previous && previous !== socket) unbind(previous);
       socket.data = { playerId, code: room.code, authenticated: true };

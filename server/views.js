@@ -42,7 +42,7 @@ export function snapshotFor(room, playerId, now) {
     snapshot.round = {
       roundIndex: round.roundIndex,
       crackerId: round.crackerId,
-      crackerName: cracker ? cracker.nickname : null,
+      crackerName: cracker ? cracker.nickname : (round.crackerName ?? null),
       startedAt: round.startedAt,
       endsAt: round.endsAt,
       durationMs: timings.ROUND_MS,
