@@ -11,6 +11,7 @@ import * as crew from './screens/crew.js';
 import * as lookout from './screens/lookout.js';
 import * as results from './screens/results.js';
 import * as gone from './screens/gone.js';
+import * as sound from './sound.js';
 
 const SCREENS = {
   join,
@@ -141,6 +142,72 @@ export function rulesSeen() {
     return true;
   }
 }
+
+// ── Sound toggle ──────────────────────────────────────────────────────
+
+function renderSoundButton() {
+  const button = $('#sound-button');
+  const on = sound.isEnabled();
+  button.setAttribute('aria-pressed', on ? 'true' : 'false');
+  button.setAttribute('aria-label', on ? 'Sound on' : 'Sound off');
+  button.classList.toggle('status__icon--on', on);
+}
+
+$('#sound-button').addEventListener('click', async () => {
+  await sound.setEnabled(!sound.isEnabled());
+  renderSoundButton();
+  sound.play('solved');
+});
+
+if (sound.restorePreference()) {
+  // Can't start audio without a gesture; the first tap anywhere unlocks it.
+  const unlock = async () => {
+    await sound.setEnabled(true);
+    renderSoundButton();
+    document.removeEventListener('pointerdown', unlock);
+  };
+  document.addEventListener('pointerdown', unlock);
+}
+renderSoundButton();
+
+// ── Set pieces, toasts and cues driven by server events ───────────────
+
+const SETPIECE_MS = { opened: 1600, locked: 900, timeout: 900 };
+let setpieceTimer = null;
+
+function setpiece(result) {
+  const el = $('#setpiece');
+  $('#setpiece-word').textContent = result === 'opened' ? 'Vault opened' : result === 'locked' ? 'Vault locked' : "Time's up";
+  el.className = `setpiece setpiece--${result}`;
+  el.hidden = false;
+  clearTimeout(setpieceTimer);
+  setpieceTimer = setTimeout(() => { el.hidden = true; }, SETPIECE_MS[result] || 900);
+}
+
+let toastTimer = null;
+
+function toast(text) {
+  const el = $('#toast');
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 2500);
+}
+
+on('strike', () => sound.play('strike'));
+on('moduleSolved', () => sound.play('solved'));
+on('shuffle', () => sound.play('shuffle'));
+on('ended', (e) => {
+  sound.play(e.result);
+  setpiece(e.result);
+});
+on('playerJoined', (e, state) => {
+  if (state && state.phase !== 'lobby' && e.playerId !== state.you.playerId) toast(`${e.nickname} joined`);
+});
+on('playerLeft', (e, state) => {
+  if (!state) return;
+  toast(e.pagesReassigned ? `${e.nickname} left — pages reassigned` : `${e.nickname} left`);
+});
 
 $('#help-button').addEventListener('click', openRules);
 $('#rules-close').addEventListener('click', closeRules);
