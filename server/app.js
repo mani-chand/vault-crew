@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import { DEFAULT_TIMINGS, realClock } from './constants.js';
 import { createRng } from './rng.js';
 import { RoomManager } from './rooms.js';
+import { attachSockets } from './socket.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -27,6 +28,8 @@ export function createApp({ clock = realClock, timings = DEFAULT_TIMINGS, seed =
     onChange: (room) => hooks.onChange(room),
     onEvent: (room, type, data, opts) => hooks.onEvent(room, type, data, opts),
   });
+
+  attachSockets({ io, rooms, hooks, clock });
 
   return { httpServer, io, rooms, hooks };
 }

@@ -228,6 +228,9 @@ export class Room {
   onRoundEvent(type, data) {
     if (type === 'ended') this.onRoundEnded();
     this.emit(type, data);
+    // Strikes and solves happen inside action(), which already snapshots;
+    // shuffles come from the round's own timers and must snapshot here.
+    if (type === 'shuffle') this.changed();
   }
 
   onRoundEnded() {

@@ -289,6 +289,16 @@ test('round events are forwarded to all; player events carry nicknames', () => {
   assert.deepEqual(last[2], { to: 'all' });
 });
 
+test('a scheduled shuffle triggers onChange so fresh snapshots go out', () => {
+  const { room, clock, events, joinN, startGame, changes } = mk();
+  joinN(3);
+  startGame();
+  const before = changes();
+  clock.advance(60000);
+  assert.equal(ofType(events, 'shuffle').length, 1);
+  assert.ok(changes() > before, 'onChange not called after scheduled shuffle');
+});
+
 test('onChange fires on mutations and lastActivityAt advances', () => {
   const { room, clock, joinN, changes } = mk();
   const before = changes();
